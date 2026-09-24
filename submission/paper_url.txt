@@ -1,1 +1,383 @@
-PASTE-YOUR-DEPLOYED-PAPER-URL-HERE
+Capstone Report — Refresh / Content Opportunity Scoring
+
+Author: Medhansh Mathur
+Lane: Refresh / Content Opportunity Scoring
+Repo: https://github.com/medhu07/flyrankai
+Date: September 24, 2026
+
+0. Abstract
+
+This project asks whether machine learning can help prioritize webpages for content-refresh review more effectively than a transparent rule-based scoring approach. The analysis uses the 30,000-row anonymized FlyRank starter dataset, containing one row per content item and historical search, traffic, engagement, content, and freshness signals. A Logistic Regression model was trained using a documented starter proxy label, where trend_direction == "down" represents the positive class, and was evaluated using a client-grouped train/test split. On the held-out test clients, the model achieved Precision@20 of 1.000 and Precision@50 of 1.000, compared with 0.800 and 0.780 for the Week-4 rule-based baseline, while the test-set proxy-positive rate was 0.511. The resulting system is intended as decision support for prioritizing human content review, not as a guarantee that a page will decline or that refreshing it will cause recovery.
+
+1. Problem Framing
+Decision Supported
+
+The decision supported by this project is:
+
+Which content items should be reviewed first for potential refresh or improvement?
+
+Unit of Analysis
+
+The unit of analysis is one pseudonymized content item.
+
+Intended Output
+
+The intended output is a ranked review queue in which each content item receives a score that can be used to prioritize limited editorial or SEO review capacity.
+
+The underlying Refresh lane asks which pages should be reviewed first for refresh, expansion, protection, pruning, or monitoring. The lane guidance recommends a transparent baseline, a learned model where additional complexity is justified, a ranked queue with reason codes, and ranking metrics such as Precision@K.
+
+Cost of a Wrong Recommendation
+
+The cost of a wrong recommendation is asymmetric:
+
+False positive: reviewer spends time investigating a page that does not belong to the decline/opportunity class.
+False negative: a potentially useful review candidate is missed.
+
+Because review capacity is limited, the project focuses particularly on ranking quality at the top of the queue, rather than relying only on overall classification accuracy.
+
+The model is therefore intended as decision support, where a human reviewer can inspect the evidence before taking action.
+
+2. Data Safety
+Development Dataset
+
+The main development dataset is:
+
+data/raw/content_refresh_anonymized.csv
+
+It contains 30,000 rows and 44 columns, with one row representing a pseudonymized content item.
+
+The Refresh lane supports use of either the starter dataset or the larger warehouse release. The warehouse contains a daily content-performance fact table and allows stronger future-window labels, but this project uses the runnable starter dataset for the current modeling exercise.
+
+Features Used
+
+The model uses available numeric and categorical signals covering areas such as:
+
+Search demand
+Competition
+Content characteristics
+Impressions
+Clicks
+Sessions
+Users
+Engagement
+Freshness
+Content age
+Position
+Content type
+Search intent
+Excluded Fields
+
+The following fields were explicitly excluded from the model:
+
+content_id
+client_id
+trend_direction
+trend_pct
+is_declining_label
+
+content_id and client_id are identifiers/grouping variables rather than predictive features.
+
+trend_direction and trend_pct were excluded because the target proxy is derived from trend_direction, creating a direct leakage risk if the field were also used as a feature.
+
+The FlyRank documentation specifically distinguishes target/proxy fields from model features and emphasizes that future information must not enter the feature window.
+
+No client names, domains, URLs, private search queries, credentials, or other client-identifying information are used in this report.
+
+Target Definition
+
+For the starter modeling exercise:
+
+is_declining_label = (trend_direction == "down").astype(int)
+
+The resulting target distribution was:
+
+Class	Rows	Share
+0	13,738	45.79%
+1	16,262	54.21%
+
+This target is a current-window proxy, not a future observed outcome. The FlyRank documentation explicitly describes this starter label as a proxy and recommends future-window outcomes for stronger capstone work.
+
+3. Baseline
+
+The baseline is a transparent rule-based content-refresh score.
+
+Scoring Rules
+
+A page receives one point for each condition it satisfies:
+
+impressions_90d is at or above the dataset median.
+ctr is at or below the dataset median.
+days_since_last_update >= 180.
+
+Therefore:
+
+baseline_score =
+    visible
+    + low_ctr
+    + stale
+Observed Thresholds
+
+The observed thresholds in the starter dataset were:
+
+Median impressions_90d: 731
+Median CTR: 0.07
+Stale threshold: 180 days
+
+The score ranges from 0 to 3.
+
+Reason Codes
+
+Reason codes were assigned to make the ranked queue understandable:
+
+visible_low_ctr_stale
+visible_low_ctr
+visible_stale
+visible
+other
+
+The baseline was deliberately kept simple so that a reviewer can understand why an item entered the queue without relying on an opaque model.
+
+The Week-4 top-20 review also revealed a weakness in the rule: several highly ranked pages had been updated relatively recently. This indicates that high visibility combined with low CTR can cause the rule to prioritize a page even when its freshness signal does not strongly support a refresh.
+
+The baseline therefore acts as a transparent benchmark rather than a claim that the rule represents the "correct" refresh decision.
+
+4. Model / Analysis
+
+The learned model is Logistic Regression.
+
+This method was selected because the starter target is binary and Logistic Regression provides a simple and interpretable first supervised model. The FlyRank modeling guidance recommends starting with a simple model and adding complexity only when the comparison justifies it.
+
+Model Output
+
+The model predicts:
+
+P(is_declining_label = 1)
+
+The predicted probability is then used as the ranking score for the review queue.
+
+Preprocessing
+
+Numeric features:
+
+Median-imputed
+Standardized
+
+Categorical features:
+
+Imputed using the most frequent category
+One-hot encoded
+
+The resulting feature set contained:
+
+29 numeric features
+11 categorical features
+Excluded Model Features
+
+The model excluded:
+
+content_id
+client_id
+trend_direction
+trend_pct
+is_declining_label
+
+The model therefore did not directly receive the trend field from which the proxy target was constructed.
+
+Model Limitation
+
+The main limitation of this modeling setup is the target definition. Because the positive class is derived from the current trend_direction, the model is primarily learning to reproduce a current-window proxy rather than predicting a genuinely future outcome.
+
+5. Evaluation
+Train/Test Split
+
+An 80/20 grouped train/test split by client_id was used.
+
+This produced:
+
+Metric	Train	Test
+Rows	23,837	6,163
+Clients	25	7
+Proxy-positive rate	55.01%	51.10%
+
+Client overlap: 0
+
+This means the seven test clients were completely held out from model training.
+
+Ranking Performance
+
+The learned model and baseline were evaluated on the same held-out test clients.
+
+Method	Precision@20	Precision@50
+Week-4 baseline	0.800	0.780
+Logistic Regression	1.000	1.000
+Test-set base rate	0.511	0.511
+
+For the top 20 model-ranked pages, all 20 belonged to the positive proxy class. The same was true for the top 50.
+
+The baseline identified 80% of its top 20 and 78% of its top 50 as positive according to the same proxy.
+
+Overall Classification Performance
+
+Using a 0.50 probability threshold:
+
+Metric	Result
+Accuracy	74.1%
+Precision — positive class	71.8%
+Recall — positive class	81.0%
+F1	76.1%
+
+The model produced:
+
+False positives: 1,000
+False negatives: 599
+
+These results show that the model's top-ranked items were highly concentrated in the proxy-positive class, while errors remained substantial when considering the entire test set.
+
+The ranking result should therefore not be confused with 100% overall classification accuracy.
+
+6. Interpretation
+Largest Logistic Regression Coefficients
+
+The model's largest absolute Logistic Regression coefficients were:
+
+Feature	Coefficient
+impressions_last_30d	-35.30
+impressions_prev_30d	+28.77
+impressions_90d	+2.17
+position_tier_top_3	-1.26
+clicks_prev_30d	+1.12
+clicks_last_30d	-1.00
+
+The model therefore relied strongly on recent and previous-period impression signals.
+
+This relationship should be interpreted carefully. These features are closely connected to the current performance pattern represented by the trend_direction proxy. Their large coefficients do not establish that impressions independently cause decline.
+
+Error Analysis
+
+Three example false positives included:
+
+Model probability	Impressions	CTR	Days since update
+0.653	307	0.00	103
+0.627	371	1.35	20
+0.536	16	0.00	20
+
+Three example false negatives included:
+
+Model probability	Impressions	CTR	Days since update
+0.441	297	0.34	20
+0.495	27	0.00	20
+0.370	4	0.00	104
+
+These examples show that the model can make errors across different visibility and freshness conditions. For example, one false positive had relatively high CTR and had been updated only 20 days earlier, while some false negatives had very low impression volume.
+
+Leakage Check
+
+The final model feature audit returned:
+
+Trend-derived columns present in model features: []
+
+Therefore, trend_direction, trend_pct, and the derived target were not included as model features.
+
+Main Interpretation
+
+The model was effective at ranking pages according to the documented starter decline proxy on the held-out clients, but the result should not be interpreted as evidence of future decline or evidence that refreshing a page will cause recovery.
+
+The lane guidance itself emphasizes that "the right page to fix" means the right page to review first, not a page guaranteed to recover after editing.
+
+7. Recommendation
+
+The final output is a ranked content review queue based on the model's predicted probability of the observed decline proxy. Higher-ranked pages should receive earlier human review rather than being automatically refreshed.
+
+The queue provides both a ranking score and reason codes to make the recommendations interpretable. For example, pages with high predicted decline probability, substantial impressions, and low CTR can be prioritized for visibility and CTR review, while pages that are also stale can be considered for content refresh.
+
+Recommended Workflow
+Review high-ranked pages first.
+Check visibility, CTR, freshness, and other content-level signals.
+Determine whether a refresh is appropriate.
+Monitor post-review performance rather than assuming that a refresh will cause recovery.
+
+The model should therefore be treated as a decision-support and prioritization tool, not an automated content-refresh system.
+
+Final Model Output
+
+The final ranked review queue is saved as:
+
+work/outputs/model_action_queue.csv
+8. Reproducibility
+
+The analysis can be reproduced from the FlyRank repository and the starter dataset.
+
+Repository
+https://github.com/medhu07/flyrankai
+Dataset
+data/raw/content_refresh_anonymized.csv
+Expected Dataset Shape
+
+30,000 rows × 44 columns
+
+Baseline Notebook
+work/notebooks/w04_baseline_score.ipynb
+
+The baseline creates:
+
+work/outputs/baseline_action_score.csv
+Modeling Notebook
+work/notebooks/w05_model.ipynb
+Reproduction Sequence
+git clone https://github.com/medhu07/flyrankai.git
+cd flyrankai
+
+Then load:
+
+df = pd.read_csv(
+    "data/raw/content_refresh_anonymized.csv"
+)
+Create the Starter Proxy
+df["is_declining_label"] = (
+    df["trend_direction"] == "down"
+).astype(int)
+
+Use:
+
+random_state = 42
+
+and an 80/20 GroupShuffleSplit using:
+
+client_id
+
+as the grouping variable.
+
+Model Pipeline
+
+The model uses a preprocessing pipeline consisting of:
+
+Numeric imputation
+→ Numeric scaling
+
+Categorical imputation
+→ One-hot encoding
+
+→ Logistic Regression
+
+Evaluation Metrics
+
+The final evaluation uses:
+
+Precision@20
+Precision@50
+Accuracy
+Precision
+Recall
+F1
+
+with the baseline evaluated on the same held-out test clients.
+
+Reproducibility Note
+
+The reported headline metrics were generated during the notebook run documented in this capstone. For final submission, the notebook should be run top-to-bottom once more and the reported numbers should be checked against the final committed output.
+
+The FlyRank guidance also recommends fixing random seeds and recording library versions when headline model results matter.
+
+9. Acknowledgments & Data Credit
+
+Built on the FlyRank ML Internship dataset.
